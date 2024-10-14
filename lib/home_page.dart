@@ -1,6 +1,7 @@
-import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:swipe_to_push/second_page.dart';
+
+import 'cupertino_forward_gesture_detector.dart';
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
@@ -34,7 +35,9 @@ class _HomePageState extends State<HomePage> {
   }
 
   void _gotoSecondPage() {
-    Navigator.push(context,
-        CupertinoPageRoute(builder: ((context) => const SecondPage())));
+    Navigator.push(
+        context,
+        SwipePushPageRoute(
+            builder: ((context) => const SecondPage()), pushRoute: () {}));
   }
 }
