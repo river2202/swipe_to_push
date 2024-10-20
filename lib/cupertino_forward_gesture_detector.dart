@@ -78,21 +78,22 @@ class SwipePushPageRoute<T> extends PageRoute<T> {
       secondaryRouteAnimation: secondaryAnimation,
       linearTransition: linearTransition,
       child: SwipeGestureDetector<T>(
-        enabledCallback: () => _isPopGestureEnabled<T>(this),
-        onStartGesture: () => _startPopGesture<T>(this),
+        enabledCallback: (type) => _isGestureEnabled<T>(this, type),
+        onStartGesture: (type) => _startGesture<T>(this, type),
         child: child,
       ),
     );
   }
 
-  static SwipeGestureController<T> _startPopGesture<T>(PageRoute<T> route) {
+  static SwipeGestureController<T> _startGesture<T>(
+      PageRoute<T> route, SwipeGestureType type) {
     return SwipeGestureController<T>(
-      navigator: route.navigator!,
-      controller: route.controller!,
+      navigator: () => route.navigator,
+      controller: () => route.controller,
     );
   }
 
-  static bool _isPopGestureEnabled<T>(PageRoute<T> route) {
+  static bool _isGestureEnabled<T>(PageRoute<T> route, SwipeGestureType type) {
     // If there's nothing to go back to, then obviously we don't support
     // the back gesture.
     if (route.isFirst) {
@@ -137,6 +138,11 @@ class SwipePushPageRoute<T> extends PageRoute<T> {
   }
 }
 
+enum SwipeGestureType {
+  swipeFromStart,
+  swipeFromEnd,
+}
+
 class SwipeGestureDetector<T> extends StatefulWidget {
   const SwipeGestureDetector({
     super.key,
@@ -147,9 +153,9 @@ class SwipeGestureDetector<T> extends StatefulWidget {
 
   final Widget child;
 
-  final ValueGetter<bool> enabledCallback;
+  final bool Function(SwipeGestureType) enabledCallback;
 
-  final ValueGetter<SwipeGestureController<T>> onStartGesture;
+  final SwipeGestureController<T> Function(SwipeGestureType) onStartGesture;
 
   @override
   State<SwipeGestureDetector<T>> createState() =>
@@ -157,10 +163,10 @@ class SwipeGestureDetector<T> extends StatefulWidget {
 }
 
 class _SwipeGestureDetectorState<T> extends State<SwipeGestureDetector<T>> {
-  SwipeGestureController<T>? _backGestureController;
+  SwipeGestureController<T>? _gestureController;
 
   late HorizontalDragGestureRecognizer _recognizer;
-  bool swipeFromStart = true;
+  SwipeGestureType type = SwipeGestureType.swipeFromStart;
 
   @override
   void initState() {
@@ -177,12 +183,12 @@ class _SwipeGestureDetectorState<T> extends State<SwipeGestureDetector<T>> {
     _recognizer.dispose();
 
     // If this is disposed during a drag, call navigator.didStopUserGesture.
-    if (_backGestureController != null) {
+    if (_gestureController != null) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (_backGestureController?.navigator.mounted ?? false) {
-          _backGestureController?.navigator.didStopUserGesture();
+        if (_gestureController?.navigator()?.mounted ?? false) {
+          _gestureController?.navigator()?.didStopUserGesture();
         }
-        _backGestureController = null;
+        _gestureController = null;
       });
     }
     super.dispose();
@@ -190,44 +196,43 @@ class _SwipeGestureDetectorState<T> extends State<SwipeGestureDetector<T>> {
 
   void _handleDragStart(DragStartDetails details) {
     assert(mounted);
-    assert(_backGestureController == null);
-    _backGestureController = widget.onStartGesture();
+    assert(_gestureController == null);
+    _gestureController = widget.onStartGesture(type);
   }
 
   void _handleDragUpdate(DragUpdateDetails details) {
     assert(mounted);
-    assert(_backGestureController != null);
-    _backGestureController!.dragUpdate(
-        _convertToLogical(details.primaryDelta! / context.size!.width) *
-            (swipeFromStart ? 1.0 : -1.0));
+    assert(_gestureController != null);
+    _gestureController!.dragUpdate(
+        _convertToLogical(details.primaryDelta! / context.size!.width));
   }
 
   void _handleDragEnd(DragEndDetails details) {
     assert(mounted);
-    assert(_backGestureController != null);
-    _backGestureController!.dragEnd(_convertToLogical(
+    assert(_gestureController != null);
+    _gestureController!.dragEnd(_convertToLogical(
         details.velocity.pixelsPerSecond.dx / context.size!.width));
-    _backGestureController = null;
+    _gestureController = null;
   }
 
   void _handleDragCancel() {
     assert(mounted);
     // This can be called even if start is not called, paired with the "down" event
     // that we don't consider here.
-    _backGestureController?.dragEnd(0.0);
-    _backGestureController = null;
+    _gestureController?.dragEnd(0.0);
+    _gestureController = null;
   }
 
   void _handlePointerDown(PointerDownEvent event) {
-    if (widget.enabledCallback()) {
-      swipeFromStart = true;
+    if (widget.enabledCallback(type)) {
+      type = SwipeGestureType.swipeFromStart;
       _recognizer.addPointer(event);
     }
   }
 
   void _handleEndAreaDown(PointerDownEvent event) {
-    if (widget.enabledCallback()) {
-      swipeFromStart = false;
+    if (widget.enabledCallback(type)) {
+      type = SwipeGestureType.swipeFromEnd;
       _recognizer.addPointer(event);
     }
   }
@@ -282,21 +287,24 @@ class SwipeGestureController<T> {
     required this.navigator,
     required this.controller,
   }) {
-    navigator.didStartUserGesture();
+    navigator()?.didStartUserGesture();
   }
 
-  final AnimationController controller;
-  final NavigatorState navigator;
+  final ValueGetter<AnimationController?> controller;
+  final ValueGetter<NavigatorState?> navigator;
 
   /// The drag gesture has changed by [fractionalDelta]. The total range of the
   /// drag should be 0.0 to 1.0.
   void dragUpdate(double delta) {
-    controller.value -= delta;
+    controller()?.value -= delta;
   }
 
   /// The drag gesture has ended with a horizontal motion of
   /// [fractionalVelocity] as a fraction of screen width per second.
   void dragEnd(double velocity) {
+    final currentController = controller();
+    if (currentController == null) return;
+
     // Fling in the appropriate direction.
     //
     // This curve has been determined through rigorously eyeballing native iOS
@@ -310,7 +318,7 @@ class SwipeGestureController<T> {
     if (velocity.abs() >= _kMinFlingVelocity) {
       animateForward = velocity <= 0;
     } else {
-      animateForward = controller.value > 0.5;
+      animateForward = currentController.value > 0.5;
     }
 
     if (animateForward) {
@@ -318,42 +326,44 @@ class SwipeGestureController<T> {
       // We want to cap the animation time, but we want to use a linear curve
       // to determine it.
       final int droppedPageForwardAnimationTime = min(
-        lerpDouble(
-                _kMaxDroppedSwipePageForwardAnimationTime, 0, controller.value)!
+        lerpDouble(_kMaxDroppedSwipePageForwardAnimationTime, 0,
+                currentController.value)!
             .floor(),
         _kMaxPageBackAnimationTime,
       );
-      controller.animateTo(1.0,
+      currentController.animateTo(1.0,
           duration: Duration(milliseconds: droppedPageForwardAnimationTime),
           curve: animationCurve);
     } else {
       // This route is destined to pop at this point. Reuse navigator's pop.
-      navigator.pop();
+      navigator()?.pop();
 
       // The popping may have finished inline if already at the target destination.
-      if (controller.isAnimating) {
+      if (currentController.isAnimating) {
         // Otherwise, use a custom popping animation duration and curve.
         final int droppedPageBackAnimationTime = lerpDouble(
-                0, _kMaxDroppedSwipePageForwardAnimationTime, controller.value)!
+                0,
+                _kMaxDroppedSwipePageForwardAnimationTime,
+                currentController.value)!
             .floor();
-        controller.animateBack(0.0,
+        currentController.animateBack(0.0,
             duration: Duration(milliseconds: droppedPageBackAnimationTime),
             curve: animationCurve);
       }
     }
 
-    if (controller.isAnimating) {
+    if (currentController.isAnimating) {
       // Keep the userGestureInProgress in true state so we don't change the
       // curve of the page transition mid-flight since CupertinoPageTransition
       // depends on userGestureInProgress.
       late AnimationStatusListener animationStatusCallback;
       animationStatusCallback = (AnimationStatus status) {
-        navigator.didStopUserGesture();
-        controller.removeStatusListener(animationStatusCallback);
+        navigator()?.didStopUserGesture();
+        controller()?.removeStatusListener(animationStatusCallback);
       };
-      controller.addStatusListener(animationStatusCallback);
+      currentController.addStatusListener(animationStatusCallback);
     } else {
-      navigator.didStopUserGesture();
+      navigator()?.didStopUserGesture();
     }
   }
 }
