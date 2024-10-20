@@ -160,6 +160,7 @@ class _SwipeGestureDetectorState<T> extends State<SwipeGestureDetector<T>> {
   SwipeGestureController<T>? _backGestureController;
 
   late HorizontalDragGestureRecognizer _recognizer;
+  bool swipeFromStart = true;
 
   @override
   void initState() {
@@ -197,7 +198,8 @@ class _SwipeGestureDetectorState<T> extends State<SwipeGestureDetector<T>> {
     assert(mounted);
     assert(_backGestureController != null);
     _backGestureController!.dragUpdate(
-        _convertToLogical(details.primaryDelta! / context.size!.width));
+        _convertToLogical(details.primaryDelta! / context.size!.width) *
+            (swipeFromStart ? 1.0 : -1.0));
   }
 
   void _handleDragEnd(DragEndDetails details) {
@@ -218,6 +220,14 @@ class _SwipeGestureDetectorState<T> extends State<SwipeGestureDetector<T>> {
 
   void _handlePointerDown(PointerDownEvent event) {
     if (widget.enabledCallback()) {
+      swipeFromStart = true;
+      _recognizer.addPointer(event);
+    }
+  }
+
+  void _handleEndAreaDown(PointerDownEvent event) {
+    if (widget.enabledCallback()) {
+      swipeFromStart = false;
       _recognizer.addPointer(event);
     }
   }
@@ -243,12 +253,22 @@ class _SwipeGestureDetectorState<T> extends State<SwipeGestureDetector<T>> {
       children: <Widget>[
         widget.child,
         PositionedDirectional(
-          end: 0.0,
+          start: 0.0,
           width: dragAreaWidth,
           top: 0.0,
           bottom: 0.0,
           child: Listener(
             onPointerDown: _handlePointerDown,
+            behavior: HitTestBehavior.translucent,
+          ),
+        ),
+        PositionedDirectional(
+          end: 0.0,
+          width: dragAreaWidth,
+          top: 0.0,
+          bottom: 0.0,
+          child: Listener(
+            onPointerDown: _handleEndAreaDown,
             behavior: HitTestBehavior.translucent,
           ),
         ),
@@ -271,7 +291,7 @@ class SwipeGestureController<T> {
   /// The drag gesture has changed by [fractionalDelta]. The total range of the
   /// drag should be 0.0 to 1.0.
   void dragUpdate(double delta) {
-    controller.value += delta;
+    controller.value -= delta;
   }
 
   /// The drag gesture has ended with a horizontal motion of
